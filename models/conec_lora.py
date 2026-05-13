@@ -187,6 +187,8 @@ class Learner(BaseLearner):
 
                 loss = loss + loss_ce_classification
                 
+                optimizer.zero_grad()
+                
                 # Knowledge-distillation loss
                 if self._cur_domain_id > 0:
                     
@@ -196,8 +198,7 @@ class Learner(BaseLearner):
                     out_teacher_logits = out_teacher["logits"]
                     loss_kd = self.lambda_1 * _KD_loss(out_new_logits, out_teacher_logits, T=self.args.kd_temperature)
                     
-                    optimizer.zero_grad()
-                    loss_kd.backward()
+                    loss_kd.backward(retain_graph=True)
                     
                     for block_id in self._network.backbone.LoRA_shared_layers_ids_list:
                         
@@ -209,9 +210,6 @@ class Learner(BaseLearner):
                                 
                                 self._network.backbone.LoRAs_dict[f'{self._cur_domain_id},{block_id}'][jj].A.weight.grad = temp_weights.unsqueeze(1) * self._network.backbone.LoRAs_dict[f'{self._cur_domain_id},{block_id}'][jj].A.weight.grad
                     
-                    optimizer.step()
-                
-                optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 losses += loss.item()
@@ -562,7 +560,7 @@ class Learner(BaseLearner):
             for block_id in tqdm(self.chosen_layers_for_intermediate_domain_classifiers, desc='Block'):
                 embeddings = embeddings_dict[block_id]
             
-                compression_to_be_saved = GMM_EM(features=embeddings.numpy(), n_components=self.n_components, max_iter=self.max_iter_for_GMM, tol=self.tol_for_GMM)
+                compression_to_be_saved = GMM_EM(features=embeddings.numpy().astype(np.float64), n_components=self.n_components, max_iter=self.max_iter_for_GMM, tol=self.tol_for_GMM)
                 self.domain_classifier_data.GMM_params_dict_of_lists[block_id].append(compression_to_be_saved)
                 
                 embeddings_dict[block_id] = None
