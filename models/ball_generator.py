@@ -79,11 +79,11 @@ def ball_loss_fast(
     dist_own_centers = torch.norm(embeddings - corresponding_ball_centers, dim=1)   # (num_samples,)
 
     # 2- Distances to all centers (for negatives)
-    dist_all = torch.cdist(embeddings, required_centers, p=2)                         # (num_samples, num_classes)
+    dist_all = torch.cdist(embeddings, required_centers, p=2)                            # (num_samples, num_classes)
 
     # 3- A mask for i != j
-    idx = torch.arange(num_classes, device=device).unsqueeze(0)               # (1, num_classes)
-    mask = idx.expand(num_samples, -1) != labels_remapped.unsqueeze(1)             # (num_samples, num_classes)
+    idx = torch.arange(num_classes, device=device).unsqueeze(0)                             # (1, num_classes)
+    mask = idx.expand(num_samples, -1) != labels_remapped.unsqueeze(1)                      # (num_samples, num_classes)
 
     # 4- Hinge loss
     dis_other_centers = dist_all[mask].view(num_samples, num_classes - 1)               # (num_samples, num_classes - 1)

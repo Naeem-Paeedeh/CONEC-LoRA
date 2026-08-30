@@ -105,14 +105,26 @@ class CORE50(object):
 
         test_idx_list = self.LUP[scen][run][-1]
         if self.preload:
-            test_x = np.take(self.x, test_idx_list, axis=0).astype(np.uint8)
+            test_x = self._gather_images(test_idx_list)
         else:
             # Build absolute disk paths and load on-the-fly
             test_paths = [os.path.join(self.root, self.paths[idx]) for idx in test_idx_list]
-            test_x = self.get_batch_from_paths(test_paths).astype(np.uint8)
+            test_x = self.get_batch_from_paths(test_paths).astype(np.uint8, copy=False)
 
         test_y = np.asarray(self.labels[scen][run][-1], dtype=np.int32)
         return test_x, test_y
+
+    @property
+    def train_batch_sizes(self) -> List[int]:
+        """Number of samples served for each (non-cumulative) training batch."""
+        return [len(b) for b in self._train_batches_idx]
+
+    @property
+    def image_shape(self):
+        """Shape of a single image, e.g. (128, 128, 3)."""
+        if self.preload:
+            return tuple(self.x.shape[1:])
+        return (128, 128, 3)
 
     def get_data_batchidx(self, idx: int):
         """
@@ -145,21 +157,43 @@ class CORE50(object):
     def _preload_images(self):
         print("Loading data...")
         bin_path = os.path.join(self.root, "core50_imgs.bin")
-        if os.path.exists(bin_path):
-            with open(bin_path, "rb") as f:
-                # Known shape for CORe50 128x128 RGB
-                self.x = np.fromfile(f, dtype=np.uint8).reshape(-1, 128, 128, 3)
-        else:
+        if not os.path.exists(bin_path):
             npz_path = os.path.join(self.root, "core50_imgs.npz")
             if not os.path.exists(npz_path):
                 raise FileNotFoundError(
                     f"Neither {bin_path} nor {npz_path} found. Place CORe50 image archive in {self.root}"
                 )
-            with open(npz_path, "rb") as f:
-                npzfile = np.load(f)
-                self.x = npzfile["x"].astype(np.uint8)
-            # Cache a flat bin for faster reloads
-            self.x.tofile(bin_path)
+            # Convert the npz archive into a flat uint8 binary cache without keeping
+            # the whole decompressed array in RAM any longer than necessary.
+            tmp_path = bin_path + ".tmp"
+            with np.load(npz_path) as npzfile:
+                arr = npzfile["x"]
+                with open(tmp_path, "wb") as g:
+                    # Write in chunks so peak memory stays bounded.
+                    chunk = 4096
+                    for start in range(0, arr.shape[0], chunk):
+                        np.ascontiguousarray(
+                            arr[start : start + chunk], dtype=np.uint8
+                        ).tofile(g)
+                del arr
+            os.replace(tmp_path, bin_path)
+
+        # Memory-map the cache: pages are loaded lazily by the OS and can be removed under pressure
+        self.x = np.memmap(bin_path, dtype=np.uint8, mode="r").reshape(-1, 128, 128, 3)
+
+    def _gather_images(self, idx_list: Sequence[int]) -> np.ndarray:
+        """
+        Copies the requested images out of the (possibly memory-mapped) store into a
+        single contiguous uint8 array, filling the destination in place to avoid the
+        temporary intermediate that np.take/fancy indexing would allocate.
+        """
+        idx = np.asarray(idx_list, dtype=np.int64)
+        out = np.empty((idx.shape[0],) + self.x.shape[1:], dtype=np.uint8)
+        chunk = 2048
+        for start in range(0, idx.shape[0], chunk):
+            sel = idx[start : start + chunk]
+            np.take(self.x, sel, axis=0, out=out[start : start + sel.shape[0]])
+        return out
 
     def _prepare_batches(self, order: Optional[Union[int, Sequence[int]]]):
         scen = self.scenario
@@ -247,11 +281,11 @@ class CORE50(object):
             idx_list = self._train_batches_idx[ptr]
 
         if self.preload:
-            x = np.take(self.x, idx_list, axis=0).astype(np.uint8)
+            x = self._gather_images(idx_list)
         else:
             # Construct absolute paths
             train_paths = [os.path.join(self.root, self.paths[idx]) for idx in idx_list]
-            x = self.get_batch_from_paths(train_paths).astype(np.uint8)
+            x = self.get_batch_from_paths(train_paths).astype(np.uint8, copy=False)
 
         if self.cumul:
             y_list = []

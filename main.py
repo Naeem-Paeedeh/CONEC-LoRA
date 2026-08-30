@@ -43,12 +43,15 @@ def check_required_arguments(args: Box):
             if key not in args:
                 raise Exception(f'Error: You must set the "{key}" in the "{args.config}" file.')
     
-    required_arguments = ['order', 'LoRA_shared_layers_ids_list', 'LoRA_domain_specfic_layers_ids_list', 'lr_default', 'epochs', 'classifier_type']
+    # Arguments that every model needs.
+    required_arguments = ['order', 'LoRA_shared_layers_ids_list', 'LoRA_domain_specfic_layers_ids_list', 'lr_default', 'epochs']
     
     verify_keys(args=args, required_arguments=required_arguments)
     
-    required_arguments = ['margin', 'epochs_domain_classifier_training']
-    verify_keys(args=args, required_arguments=required_arguments)
+    # CONEC-LoRA trains a set of auxiliary domain classifiers whereas the CL-LoRA identifies the domain implicitly with its block-diagonal head.
+    if args.model_name.lower() == 'conec_lora':
+        required_arguments = ['classifier_type', 'margin', 'epochs_domain_classifier_training']
+        verify_keys(args=args, required_arguments=required_arguments)
         
 
 def set_default_values(args: dict):
@@ -104,6 +107,13 @@ def set_default_values(args: dict):
     set_if_it_does_not_exist(args=args, key='cache_synthetic_embeddings', default_value=True)
     set_if_it_does_not_exist(args=args, key='max_number_of_embeddings_in_memory', default_value=1e8)
     set_if_it_does_not_exist(args=args, key='UMAP', default_value=False)
+    
+    # CL-LoRA specific defaults
+    set_if_it_does_not_exist(args=args, key='use_distillation', default_value=True)
+    set_if_it_does_not_exist(args=args, key='use_block_weight', default_value=True)
+    set_if_it_does_not_exist(args=args, key='use_init_ptm', default_value=False)
+    set_if_it_does_not_exist(args=args, key='lambda_orthogonality', default_value=1e-4)
+    set_if_it_does_not_exist(args=args, key='kd_temperature', default_value=2.0)
     
     # We convert all elements to strings to use them as the keys in a dictionary.
     args.LoRA_shared_layers_ids_list = [str(i) for i in sorted(args.LoRA_shared_layers_ids_list)]

@@ -173,8 +173,9 @@ class VisionTransformer(nn.Module):
 
             del self.norm  # remove the original norm
 
-        # f"{Layer-ID}" -> Shared LoRA
-        # f"Domain-ID,{Layer-ID}" -> Domain-specific LoRA
+        # Keys are "{domain_id},{block_id}" for both shared and domain-specific
+        # LoRAs. Shared-layer snapshots are kept for KD; inference always
+        # consumes the latest shared copy
         self.LoRAs_dict = nn.ModuleDict()
         
         self.num_blocks = len(self.blocks)
@@ -255,8 +256,27 @@ class VisionTransformer(nn.Module):
 
         self._cur_domain_id += 1
 
+    def _resolve_lora_key_domain_id(
+        self,
+        block_id_str: str,
+        domain_id: int,
+        use_latest_shared_loras: bool = True,
+    ) -> int:
+        """Pick which LoRA snapshot to apply for block_id_str.
+        """
+        if domain_id == -1:
+            domain_id = self._cur_domain_id
+
+        if use_latest_shared_loras and block_id_str in self.LoRA_shared_layers_ids_list:
+            return self._cur_domain_id
+
+        return domain_id
+
     def _forward_layer_with_domain_ids_list(self, x: T, block_id: int, domain_ids):
-        
+        # Shared layers ignore the predicted domain and always use the latest snapshot.
+        if str(block_id) in self.LoRA_shared_layers_ids_list:
+            return self._forward_layer_with_a_single_domain_id(x, block_id=block_id)
+
         if isinstance(domain_ids, int):
             res = self._forward_layer_with_a_single_domain_id(x, block_id=block_id, domain_id=domain_ids)
         elif type(domain_ids) in [T, list]:
@@ -277,16 +297,24 @@ class VisionTransformer(nn.Module):
         
         return res
     
-    def _forward_layer_with_a_single_domain_id(self, x: T, block_id: int, domain_id: int = -1):
+    def _forward_layer_with_a_single_domain_id(
+        self,
+        x: T,
+        block_id: int,
+        domain_id: int = -1,
+        use_latest_shared_loras: bool = True,
+    ):
         block_id_str = str(block_id)
         
         arguments_other = dict(LoRA=None)
         
-        if domain_id == -1:
-            domain_id = self._cur_domain_id
-            
         if block_id_str in self.LoRA_all_layers_ids_list:
-            arguments_other['LoRA'] = self.LoRAs_dict[f'{domain_id},{block_id_str}']
+            lora_domain_id = self._resolve_lora_key_domain_id(
+                block_id_str=block_id_str,
+                domain_id=domain_id,
+                use_latest_shared_loras=use_latest_shared_loras,
+            )
+            arguments_other['LoRA'] = self.LoRAs_dict[f'{lora_domain_id},{block_id_str}']
 
         else:
             raise NotImplementedError
@@ -387,7 +415,9 @@ class VisionTransformer(nn.Module):
         x = x + self.pos_embed
         x = self.pos_drop(x)
 
-        x_previous_domain = copy.deepcopy(x)        # x_teacher
+        # Teacher starts from the same tokens with no graph. clone() is required
+        # because deepcopy() cannot copy a non-leaf activation.
+        x_previous_domain = x.detach().clone()
 
         for block_id in self.LoRA_shared_layers_ids_list:
             x = self._forward_layer_with_a_single_domain_id(x=x, block_id=block_id)
@@ -396,7 +426,13 @@ class VisionTransformer(nn.Module):
         cls_token_new_domain = x[:, 0, :]
 
         for block_id in self.LoRA_shared_layers_ids_list:
-            x_previous_domain = self._forward_layer_with_a_single_domain_id(x=x_previous_domain, block_id=block_id, domain_id=domain_id - 1)
+            # Teacher must use the frozen shared-LoRA snapshot from the previous domain.
+            x_previous_domain = self._forward_layer_with_a_single_domain_id(
+                x=x_previous_domain,
+                block_id=block_id,
+                domain_id=domain_id - 1,
+                use_latest_shared_loras=False,
+            )
         
         x_previous_domain = self.norm(x_previous_domain)
         cls_token_previous_domain = x_previous_domain[:, 0, :]

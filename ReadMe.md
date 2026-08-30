@@ -4,7 +4,7 @@ The official repository for the **CONEC-LoRA** algorithm as described in the **C
 
 ## Preparing the datasets
 
-The datasets used in the paper can be downloaded as described in this section. Please note that the "data_path" setting in the .json files in the [exps](/exps) must be set to the directories that are used for each dataset.
+The datasets used in the paper can be downloaded as described in this section. Please note that the "data_path" setting in the .json files must be set to the directories that are used for each dataset.
 
 ### CDDB
 
@@ -26,15 +26,15 @@ The DomainNet dataset can be downloaded from [the project page of the Moment Mat
 
 We performed the experiments with the following versions of Python and the main libraries:
 
-- `python==3.12.7`
-- `torch==2.9.1`
-- `torchvision==0.24.1`
-- `numpy==2.4.4`
-- `timm==1.0.26`
-- `scikit-learn==1.8.0`
-- `python-box==7.4.1`
-- `scipy==1.17.1`
-- `einops==1.17.1`
+- `python==3.9.23`
+- `torch==2.0.1`
+- `torchvision==0.15.2`
+- `numpy==1.26.4`
+- `timm==0.6.12`
+- `scikit-learn==1.6.1`
+- `python-box==7.3.2`
+- `scipy==1.13.1`
+- `einops==0.8.1`
 
 ## Running the experiments
 

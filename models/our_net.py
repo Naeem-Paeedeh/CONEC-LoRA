@@ -26,10 +26,41 @@ def get_backbone(args):
         model = timm.create_model("vit_base_patch16_224_in21k", pretrained=True, num_classes=0)
         model.out_dim = 768
         return model.eval()
+    elif '_cllora' in name:
+        # CL-LoRA
+        if args.model_name != "cllora":
+            raise NotImplementedError("Inconsistent model name and model type")
+        
+        from backbone import vit_cllora
+        
+        tuning_config = Box(
+            # CONEC-LoRA argument names are mapped onto the CL-LoRA ones.
+            msa=args.LoRA_qkv_mask,                                     # which of q/k/v get a LoRA
+            general_pos=[int(i) for i in args.LoRA_shared_layers_ids_list],        # task-shared blocks
+            specfic_pos=[int(i) for i in args.LoRA_domain_specfic_layers_ids_list],  # task-specific blocks
+            ffn_num=args.LoRA_downsize_dimension,                       # LoRA rank
+            use_distillation=args.use_distillation,
+            use_block_weight=args.use_block_weight,
+            freeze_B_matrices_in_shared_LoRAs=args.freeze_B_matrices_in_shared_LoRAs,
+            d_model=768,
+            _device=args.device[0],
+        )
+        
+        if name == "vit_base_patch16_224_cllora":
+            model = vit_cllora.vit_base_patch16_224_cllora(num_classes=0, global_pool=False,
+                drop_path_rate=0.0, args=args, tuning_config=tuning_config)
+        elif name == "vit_base_patch16_224_in21k_cllora":
+            model = vit_cllora.vit_base_patch16_224_in21k_cllora(num_classes=0, global_pool=False,
+                drop_path_rate=0.0, args=args, tuning_config=tuning_config)
+        else:
+            raise NotImplementedError("Unknown type {}".format(name))
+        
+        model.out_dim = 768
+        return model.eval()
     elif '_conec_lora' in name:
         LoRA_downsize_dimension = args.LoRA_downsize_dimension
         
-        if args.model_name == "conec_lora" or args.model_name == "cllora":
+        if args.model_name == "conec_lora":
             tuning_config = Box(
                 LoRA_qkv_mask=args.LoRA_qkv_mask,
                 LoRA_domain_specfic_layers_ids_list=args.LoRA_domain_specfic_layers_ids_list,
@@ -235,16 +266,21 @@ class OurNet(BaseNet):
         return output
 
     def forward_kd(self, x, t_idx):
-        # It forwards the same inputs through the shared LoRAs for both current domain and previous domain.
+        # Shared-LoRA CLS tokens for the current (student) and previous (teacher) domain.
         x_new, x_previous_domain = self.backbone.forward_general_cls(x=x, domain_id=t_idx)
-        
-        if self.use_proxy_classifier:
-            out_new_domain = self.proxy_fc.forward(x_new)
-            out_previous_domain = self.proxy_fc.forward(x_previous_domain)
-        else:
-            out_new_domain = self.classifiers_list[-1].forward(x_new)
-            out_previous_domain = self.classifiers_list[-1].forward(x_previous_domain)
-        
+
+        classifier = self.proxy_fc if self.use_proxy_classifier else self.classifiers_list[-1]
+
+        # StochasticClassifier redraws its weights on every forward. KD must use
+        # one shared draw so the loss compares LoRA features, not two random heads.
+        fwd_kwargs = {}
+        if isinstance(classifier, StochasticClassifier):
+            fwd_kwargs['weight'] = classifier.sample_weight(stochastic=True)
+
+        out_new_domain = classifier.forward(x_new, **fwd_kwargs)
+        with torch.no_grad():
+            out_previous_domain = classifier.forward(x_previous_domain, **fwd_kwargs)
+
         return out_new_domain, out_previous_domain
 
     def forward(self, x, test: bool = False, domain_ids: T = None):

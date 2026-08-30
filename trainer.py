@@ -30,19 +30,14 @@ def train(args: Box):
 
 def _train(args: Box):
 
-    logs_directory_name = args.logdir
+    today_str = ou.get_time_str(add_time=False)
+    
+    logs_directory_name = f"{args.logdir}/{today_str}"
     
     if not os.path.exists(logs_directory_name):
         os.makedirs(logs_directory_name)
-
-    log_file_name = "{}/DB={},{},Order={},Seed={},Time{}".format(
-        logs_directory_name,
-        args.dataset,
-        args.prefix,
-        args.order,
-        args.seed,
-        ou.get_time_str()
-    )
+    
+    log_file_name = f"{logs_directory_name}/DB={args.dataset},{args.prefix},Order={args.order},Seed={args.seed},Time={ou.get_time_str()}"
     
     logging.basicConfig(
         level=logging.INFO,
@@ -52,6 +47,19 @@ def _train(args: Box):
             logging.StreamHandler(sys.stdout),
         ],
     )
+
+    # Global exception handler
+    def global_exception_handler(exc_type, exc_value, exc_traceback):
+        # Ignore KeyboardInterrupt so a console python program can exit with Ctrl + C
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # Log the error and the traceback
+        logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+    # Assign your custom handler to sys.excepthook
+    sys.excepthook = global_exception_handler
 
     ou.set_seed(args.seed)
     _set_device(args)
@@ -121,13 +129,13 @@ def _train(args: Box):
         if args.save_model_after_each_task:
             save_model(model=model, args=args, file_path=log_file_name + f",model,after_task_{domain_id}.pth")
     
-    with open(log_file_name + ".pkl", "wb") as f:
-        pickle.dump(accuracies_dict_to_save, f)
+    # with open(log_file_name + ".pkl", "wb") as f:
+    #     pickle.dump(accuracies_dict_to_save, f)
     
     logging.info('The process is finished!')
     
-    if args.save_last_model:
-        save_model(model=model, args=args, file_path=log_file_name + ",final_model.pth")
+    # if args.save_last_model:
+    #     save_model(model=model, args=args, file_path=log_file_name + ",final_model.pth")
         
     # To draw the UMAP
     return model

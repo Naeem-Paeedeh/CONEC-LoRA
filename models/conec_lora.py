@@ -158,7 +158,7 @@ class Learner(BaseLearner):
         
         prog_bar = tqdm(range(epochs), desc='Epoch')
         
-        logging.info(f'Training the domain {self._cur_domain_id} ...')
+        logging.info(f'Training the domain {self._cur_domain_id + 1} / {self.total_sessions} ...')
         
         for epoch in prog_bar:
             self._network.train()
@@ -175,11 +175,37 @@ class Learner(BaseLearner):
                 batch = ou.to_device(batch, self._device)
                 _, inputs, targets = batch
                 
+                targets_from_zero = targets % self.class_num
+                
+                # Knowledge-distillation loss (shared LoRAs only; skipped when none exist)
+                if self._cur_domain_id > 0 and self.LoRA_shared_layers_ids_list:
+                    out_new, out_teacher = self._network.forward_kd(inputs, self._cur_domain_id)
+                    out_new_logits = out_new["logits"]
+                    out_teacher_logits = out_teacher["logits"]
+                    loss_kd = self.lambda_1 * _KD_loss(out_new_logits, out_teacher_logits, T=self.args.kd_temperature)
+
+                    optimizer.zero_grad()
+                    loss_kd.backward()
+
+                    for block_id in self._network.backbone.LoRA_shared_layers_ids_list:
+                        for jj in range(len(self._network.backbone.LoRA_qkv_mask)):
+                            if self._network.backbone.LoRA_qkv_mask[jj] != 1:
+                                continue
+
+                            cur_A = self._network.backbone.LoRAs_dict[f'{self._cur_domain_id},{block_id}'][jj].A.weight
+                            if cur_A.grad is None:
+                                continue
+
+                            old_A = self._network.backbone.LoRAs_dict[f'{self._cur_domain_id - 1},{block_id}'][jj].A.weight
+                            temp_weights = torch.norm(old_A, dim=1)
+                            temp_weights = len(temp_weights) * temp_weights / torch.sum(temp_weights)
+                            cur_A.grad = temp_weights.unsqueeze(1) * cur_A.grad
+
+                    optimizer.step()
+                
                 output = self._network.forward(inputs, test=False)
 
                 logits = output["logits"]
-                
-                targets_from_zero = targets % self.class_num
                 
                 loss = 0.0
                 
@@ -188,28 +214,6 @@ class Learner(BaseLearner):
                 loss = loss + loss_ce_classification
                 
                 optimizer.zero_grad()
-                
-                # Knowledge-distillation loss
-                if self._cur_domain_id > 0:
-                    
-                    # We forward the inputs with the shared LoRAs for the current domain and previous domain.
-                    out_new, out_teacher = self._network.forward_kd(inputs, self._cur_domain_id)
-                    out_new_logits = out_new["logits"]
-                    out_teacher_logits = out_teacher["logits"]
-                    loss_kd = self.lambda_1 * _KD_loss(out_new_logits, out_teacher_logits, T=self.args.kd_temperature)
-                    
-                    loss_kd.backward(retain_graph=True)
-                    
-                    for block_id in self._network.backbone.LoRA_shared_layers_ids_list:
-                        
-                        for jj in range(len(self._network.backbone.LoRA_qkv_mask)):
-                            if self._network.backbone.LoRA_qkv_mask[jj] == 1:
-                                temp_weights = 1. * torch.norm(self._network.backbone.LoRAs_dict[f'{self._cur_domain_id - 1},{block_id}'][jj].A.weight, dim=1)
-                                
-                                temp_weights = 1. * len(temp_weights) * temp_weights / torch.sum(temp_weights)
-                                
-                                self._network.backbone.LoRAs_dict[f'{self._cur_domain_id},{block_id}'][jj].A.weight.grad = temp_weights.unsqueeze(1) * self._network.backbone.LoRAs_dict[f'{self._cur_domain_id},{block_id}'][jj].A.weight.grad
-                    
                 loss.backward()
                 optimizer.step()
                 losses += loss.item()
@@ -222,13 +226,7 @@ class Learner(BaseLearner):
                 scheduler.step()
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
 
-            info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}".format(
-                self._cur_domain_id,
-                epoch + 1,
-                epochs,
-                losses / len(train_loader),
-                train_acc,
-            )
+            info = f"Domain {self._cur_domain_id + 1}/{self.total_sessions}, Epoch {epoch + 1}/{epochs} => Loss {losses / len(train_loader):.3f}, Train_accy {train_acc:.2f}"
             prog_bar.set_description(info)
 
             logging.info(info)
@@ -529,11 +527,11 @@ class Learner(BaseLearner):
             scheduler_domain_classifier.step()
             train_acc = np.around(tensor2numpy(correct) * 100 / total, decimals=2)
             logging.info(f"Domain classifier training: "
-                        f"Task {self._cur_domain_id}, "
-                        f"Epoch [{epoch + 1}/{self.epochs_domain_classifier_training}] "
-                        f"lr {scheduler_domain_classifier.get_last_lr()[0]:.5f} "
-                        f"Loss {loss_accumulated_for_reporting / len(dataloader):.4f}, "
-                        f"Train_acc {train_acc:.2f}")
+                         f"Domain {self._cur_domain_id + 1}/{self.total_sessions}, "
+                         f"Epoch [{epoch + 1}/{self.epochs_domain_classifier_training}] "
+                         f"lr {scheduler_domain_classifier.get_last_lr()[0]:.5f} "
+                         f"Loss {loss_accumulated_for_reporting / len(dataloader):.4f}, "
+                         f"Train_acc {train_acc:.2f}")
         
     @torch.no_grad()
     def calculate_and_store_stats_for_current_domain(self, dataloader):
@@ -560,7 +558,7 @@ class Learner(BaseLearner):
             for block_id in tqdm(self.chosen_layers_for_intermediate_domain_classifiers, desc='Block'):
                 embeddings = embeddings_dict[block_id]
             
-                compression_to_be_saved = GMM_EM(features=embeddings.numpy().astype(np.float64), n_components=self.n_components, max_iter=self.max_iter_for_GMM, tol=self.tol_for_GMM)
+                compression_to_be_saved = GMM_EM(features=embeddings.numpy(), n_components=self.n_components, max_iter=self.max_iter_for_GMM, tol=self.tol_for_GMM)
                 self.domain_classifier_data.GMM_params_dict_of_lists[block_id].append(compression_to_be_saved)
                 
                 embeddings_dict[block_id] = None

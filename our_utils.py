@@ -27,7 +27,6 @@ def get_time_str(add_time: bool = True):
 def set_seed(seed):
     """Sets the seed of random number generators to the predefined seed number for reproducibility.
     """
-    # torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -36,7 +35,8 @@ def set_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
     torch.random.manual_seed(seed)
-    random.seed(seed)
+    # torch.use_deterministic_algorithms(True)
+    # torch.backends.cudnn.enabled = False        # For the older Linux version.
 
 
 def freeze_or_unfreeze(obj: nn.Module, requires_grad: bool):

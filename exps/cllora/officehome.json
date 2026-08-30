@@ -1,0 +1,44 @@
+{
+    "prefix": "CL_LoRA",
+    "dataset": "officehome",
+    "data_path": "/home/USER_NAME/Datasets/DIL/OfficeHomeDataset_10072016/",
+    "total_sessions": 4,
+    "shuffle": false,
+    "init_cls": 65,
+    "increment": 65,
+    "model_name": "cllora",
+    "backbone_type": "vit_base_patch16_224_cllora",
+
+    "use_distillation": true,
+    "use_block_weight": true,
+    "use_init_ptm": false,
+
+    "LoRA_downsize_dimension": 8,
+    "freeze_B_matrices_in_shared_LoRAs": true,
+    "LoRA_qkv_mask": [1, 0, 1],
+    "LoRA_shared_layers_ids_list": [0, 1, 2, 3, 4, 5],
+    "LoRA_domain_specfic_layers_ids_list": [6, 7, 8, 9, 10, 11],
+
+    "epochs": 40,
+    "lr_default": 0.02,
+    "lr_LoRAs": 0.02,
+    "lr_classifier": 0.02,
+    "weight_decay": 2e-4,
+    "weight_decay_classifiers": 2e-5,
+    "min_lr": 0,
+    "optimizer": "sgd",
+    "scheduler": "cosine",
+
+    "lambda_1": 5.0,
+    "lambda_orthogonality": 1e-4,
+    "kd_temperature": 2.0,
+
+    "embd_dim": 768,
+    "seed": [0],
+    "init_milestones": [20, 30, 40],
+    "lr_default_decay": 0.1,
+    "batch_size": 64,
+    "num_workers": 8,
+    "save_model_after_each_task": false,
+    "debugging": false
+}

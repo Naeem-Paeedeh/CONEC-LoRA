@@ -16,16 +16,18 @@ class StochasticClassifier(nn.Module):
         self.num_features = input_dim
         self.temperature = temperature
 
-    def forward(self, x, stochastic=True, return_dict: bool = True):
-        mu = self.mu
-        sigma = self.sigma
-
+    def sample_weight(self, stochastic: bool = True):
+        # One draw of the Bayesian classifier. Reuse this tensor when the same
+        # head must score student and teacher features (KD).
         if stochastic:
-            sigma = F.softplus(sigma - 4)                                   # when sigma=0, softplus(sigma-4)=0.0181
-            weight = sigma * torch.randn_like(mu) + mu
-        else:
-            weight = mu
-        
+            sigma = F.softplus(self.sigma - 4)  # when sigma=0, softplus(sigma-4)=0.0181
+            return sigma * torch.randn_like(self.mu) + self.mu
+        return self.mu
+
+    def forward(self, x, stochastic=True, return_dict: bool = True, weight=None):
+        if weight is None:
+            weight = self.sample_weight(stochastic=stochastic)
+
         weight = F.normalize(weight, p=2, dim=1)
         x = F.normalize(x, p=2, dim=1)
 
@@ -34,7 +36,7 @@ class StochasticClassifier(nn.Module):
 
         if return_dict:
             result = {'logits': result}
-        
+
         return result
     
 

@@ -128,22 +128,27 @@ class iCore50(iData):
     def download_data(self):
         datagen = CORE50(root=self.args["data_path"], scenario="ni", order=self.args["order"], preload=True)
 
-        train_x_list = []
-        train_y_list = []
-        for i, train_batch in enumerate(datagen):
-            imglist, labellist = train_batch
-            labellist += i * 50
-            imglist = imglist.astype(np.uint8)
-            train_x_list.append(imglist)
-            train_y_list.append(labellist)
-        train_x = np.concatenate(train_x_list)
-        train_y = np.concatenate(train_y_list)
+        # Preallocate the final arrays and fill them in place.
+        batch_sizes = datagen.train_batch_sizes
+        total = int(sum(batch_sizes))
+        train_x = np.empty((total,) + datagen.image_shape, dtype=np.uint8)
+        train_y = np.empty(total, dtype=np.int32)
+
+        offset = 0
+        for i, (imglist, labellist) in enumerate(datagen):
+            n = imglist.shape[0]
+            train_x[offset : offset + n] = imglist
+            train_y[offset : offset + n] = labellist + i * 50
+            offset += n
+            # Free the per-batch buffer before loading the next one.
+            del imglist, labellist
+        assert offset == total
+
         self.train_data = train_x
         self.train_targets = train_y
 
         test_x, test_y = datagen.get_test_set()
-        test_x = test_x.astype(np.uint8)
-        self.test_data = test_x
+        self.test_data = np.asarray(test_x, dtype=np.uint8)
         self.test_targets = test_y
 
 
